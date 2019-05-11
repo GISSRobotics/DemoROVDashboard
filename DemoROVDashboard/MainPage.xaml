@@ -9,6 +9,88 @@
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
     <Grid>
-
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="3*"/>
+            <ColumnDefinition Width="2*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="2*"/>
+        </Grid.RowDefinitions>
+        <ScrollViewer Name="ConsoleScroller" VerticalScrollBarVisibility="Visible" VerticalScrollMode="Enabled">
+            <TextBlock Name="ConsoleView" Text="" />
+        </ScrollViewer>
+        <Rectangle Grid.Row="1" Fill="LightGray"/>
+        <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
+            <TextBlock FontSize="20" Text="New Entry" Margin="13,0,0,0"/>
+            <Grid Grid.Column="1" VerticalAlignment="Bottom" Margin="13,0,12,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="64"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="auto"/>
+                    <RowDefinition Height="auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="Key" Grid.Column="0" Margin="7,0,0,5"/>
+                <TextBlock Text="Type" Grid.Column="1" Margin="7,0,0,5"/>
+                <TextBlock Text="Value" Grid.Column="2" Margin="7,0,0,5"/>
+                <TextBox Name="NewKey" Text="{x:Bind newValue.Key}" Grid.Column="0" Grid.Row="1"/>
+                <ComboBox Name="NewType" SelectedIndex="{x:Bind newValue.TypeInt}" Grid.Column="1" Grid.Row="1" HorizontalAlignment="Stretch">
+                    <ComboBoxItem Content="int"></ComboBoxItem>
+                    <ComboBoxItem Content="float"></ComboBoxItem>
+                    <ComboBoxItem Content="string"></ComboBoxItem>
+                </ComboBox>
+                <TextBox Name="NewValue" Text="{x:Bind newValue.ValueRepr}" Grid.Column="2" Grid.Row="1"/>
+                <Button Click="Add_Click" Content="&#xE710;" FontFamily="Segoe MDL2 Assets" Width="64" Height="32" Grid.Column="3" Grid.Row="1"/>
+            </Grid>
+            <Line Stroke="{ThemeResource ApplicationSecondaryForegroundThemeBrush}" StrokeThickness="1" Margin="0,5,0,0" X1="0" Y1="0" X2="1" Y2="0" Stretch="UniformToFill"></Line>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Grid.Row="1">
+            <Grid Margin="13,0,12,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="64"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Key" Grid.Column="0" Margin="7,0,0,0"/>
+                <TextBlock Text="Type" Grid.Column="1" Margin="7,0,0,0"/>
+                <TextBlock Text="Value" Grid.Column="2" Margin="7,0,0,0"/>
+            </Grid>
+            <ListView Name="Variables" Grid.Column="1" Grid.Row="1" SelectionMode="None" VerticalAlignment="Stretch" ItemsSource="{x:Bind dataTable}" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.VerticalScrollMode="Enabled">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:Value">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="64"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Text="{x:Bind Key,Mode=TwoWay}" Grid.Column="0"/>
+                            <ComboBox SelectedIndex="{x:Bind TypeInt,Mode=TwoWay}" Grid.Column="1" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="int"></ComboBoxItem>
+                                <ComboBoxItem Content="float"></ComboBoxItem>
+                                <ComboBoxItem Content="string"></ComboBoxItem>
+                            </ComboBox>
+                            <TextBox Text="{x:Bind ValueRepr,Mode=TwoWay}" Grid.Column="2"/>
+                            <StackPanel Orientation="Horizontal" Grid.Column="3">
+                                <Button Tag="{x:Bind Key}" Click="Send_Click" Content="&#xE724;" FontFamily="Segoe MDL2 Assets" Width="32" Height="32"/>
+                                <Button Tag="{x:Bind Key}" Click="Remove_Click" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" Width="32" Height="32"/>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <local:Value Key="test" TypeInt="1" ValueRepr="0.5" />
+            </ListView>
+        </StackPanel>
     </Grid>
 </Page>
