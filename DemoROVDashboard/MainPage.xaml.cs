@@ -18,6 +18,7 @@ using Windows.Devices.SerialCommunication;
 using System.Collections.ObjectModel;
 using Windows.Storage.Streams;
 using System.ComponentModel;
+using Windows.Gaming.Input;
 
 // The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
@@ -28,15 +29,16 @@ namespace DemoROVDashboard
     /// </summary>
     public sealed partial class MainPage : Page
     {
-
-        ObservableCollection<Value> dataTable = new ObservableCollection<Value>();
-        Value newValue = new Value();
+        readonly ObservableCollection<Value> dataTable = new ObservableCollection<Value>();
+        readonly Value newValue = new Value();
         SerialDevice device = null;
         volatile string bigInputBuffer = "";
         volatile string cmdInputBuffer = "";
         const int BUFFER_LENGTH = 2000;
         volatile bool doReaderProcess = false;
         volatile bool readerProcessRunning = false;
+        readonly List<RawGameController> gamepads = new List<RawGameController>();
+        DispatcherTimer ControllerReadingUpdateTimer;
 
         public MainPage()
         {
@@ -44,9 +46,109 @@ namespace DemoROVDashboard
 
             FindSerialDevices();
 
-            dataTable.Add(new Value { Key = "key123", Type = ValueType.STRING, ValueStr = "foobar" });
-
             Variables.ItemsSource = dataTable;
+
+            ControllerReadingUpdateTimer = new DispatcherTimer()
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
+
+            ControllerReadingUpdateTimer.Tick += ControllerReadingUpdateTimer_Tick;
+            ControllerReadingUpdateTimer.Start();
+
+            RawGameController.RawGameControllerAdded += ControllerAdded;
+            RawGameController.RawGameControllerRemoved += ControllerRemoved;
+        }
+
+        private void ControllerReadingUpdateTimer_Tick(object sender, object e)
+        {
+            ControllerReadingUpdate();
+        }
+
+        private void ControllerAdded(object sender, RawGameController e)
+        {
+            if (!gamepads.Contains(e))
+            {
+                gamepads.Add(e);
+            }
+
+            FullControllerUpdate();
+        }
+
+        private async void ControllerRemoved(object sender, RawGameController e)
+        {
+            int indexRemoved = gamepads.IndexOf(e);
+
+            if (indexRemoved > -1)
+            {
+                gamepads.RemoveAt(indexRemoved);
+                int count = 1;
+                while (count > 0)
+                {
+                    await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                    {
+                        dataTable.Remove(dataTable.FirstOrDefault((Value a) => { return a.Key.StartsWith("HID/Gamepad/" + gamepads.Count); }));
+                    });
+                    count = dataTable.Count((Value a) => { return a.Key.StartsWith("HID/Gamepad/" + gamepads.Count); });
+                }
+            }
+
+            FullControllerUpdate();
+        }
+
+        private void FullControllerUpdate()
+        {
+            AddOrUpdateValue($"HID/Gamepad", gamepads.Count, true);
+
+            for (int i = 0; i < gamepads.Count; i++)
+            {
+                RawGameController gamepad = gamepads[i];
+                AddOrUpdateValue($"HID/Gamepad/{i}", gamepad.DisplayName, true);
+                AddOrUpdateValue($"HID/Gamepad/{i}/Axis", gamepad.AxisCount, true);
+                AddOrUpdateValue($"HID/Gamepad/{i}/Button", gamepad.ButtonCount, true);
+                AddOrUpdateValue($"HID/Gamepad/{i}/Switch", gamepad.SwitchCount, true);
+
+                for (int j = 0; j < gamepad.ButtonCount; j++)
+                {
+                    AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}/Name", gamepad.GetButtonLabel(j).ToString(), true);
+                }
+
+                for (int j = 0; j < gamepad.SwitchCount; j++)
+                {
+                    AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}/Kind", (int)gamepad.GetSwitchKind(j), true);
+                }
+            }
+            
+            ControllerReadingUpdate();
+        }
+
+        private void ControllerReadingUpdate()
+        {
+            for (int i = 0; i < gamepads.Count; i++)
+            {
+                RawGameController gamepad = gamepads[i];
+                bool[] buttonArray = new bool[gamepad.ButtonCount];
+                GameControllerSwitchPosition[] switchArray = new GameControllerSwitchPosition[gamepad.SwitchCount];
+                double[] axisArray = new double[gamepad.AxisCount];
+                ulong timestamp = gamepad.GetCurrentReading(buttonArray, switchArray, axisArray);
+
+                for (int j = 0; j < gamepad.AxisCount; j++)
+                {
+                    AddOrUpdateValue($"HID/Gamepad/{i}/Axis/{j}", axisArray[j], true);
+                }
+
+                for (int j = 0; j < gamepad.ButtonCount; j++)
+                {
+                    AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}", buttonArray[j], true);
+                }
+
+                for (int j = 0; j < gamepad.SwitchCount; j++)
+                {
+                    AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}", (int)switchArray[j], true);
+                }
+
+                //AddOrUpdateValue($"HID/Gamepad/{i}/Battery", (int)gamepad.TryGetBatteryReport().Status, true);
+            }
         }
 
         private void WriteToConsole(string text)
@@ -179,7 +281,7 @@ namespace DemoROVDashboard
 
             if (doReaderProcess)
             {
-                DisconnectDevice();
+                await DisconnectDevice();
             }
             doReaderProcess = false;
             readerProcessRunning = false;
@@ -220,7 +322,7 @@ namespace DemoROVDashboard
                         cmdInputBuffer = cmdInputBuffer.Substring(2);
                         string value = cmdInputBuffer.Substring(0, cmdInputBuffer.Length - 1);
 
-                        AddOrUpdateValue(new Value() { Key = key, Type = type, ValueRepr = value });
+                        AddOrUpdateValue(key, type, value);
                     }
 
                     cmdInputBuffer = "";
@@ -262,11 +364,10 @@ namespace DemoROVDashboard
 
         private void Add_Click(object sender, RoutedEventArgs e)
         {
-            AddOrUpdateValue(newValue);
-            SendValue(newValue);
+            AddOrUpdateValue(newValue, true);
         }
 
-        private void AddOrUpdateValue(Value value)
+        private void AddOrUpdateValue(Value value, bool send = false)
         {
             Value entry = dataTable.FirstOrDefault((Value a) => { return a.Key == value.Key; });
             if (entry != null)
@@ -275,8 +376,37 @@ namespace DemoROVDashboard
             }
             else
             {
-                dataTable.Add(new Value { Key = value.Key, Type = value.Type, ValueRepr = value.ValueRepr });
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { dataTable.Add(new Value { Key = value.Key, Type = value.Type, ValueRepr = value.ValueRepr }); });
             }
+
+            if (send)
+            {
+                SendValue(value);
+            }
+        }
+
+        private void AddOrUpdateValue(string Key, ValueType Type, string ValueRepr, bool send = false)
+        {
+            AddOrUpdateValue(new Value { Key = Key, Type = Type, ValueRepr = ValueRepr }, send);
+        }
+
+        private void AddOrUpdateValue(string Key, int Value, bool send = false)
+        {
+            AddOrUpdateValue(Key, ValueType.INT, Value.ToString(), send);
+        }
+        private void AddOrUpdateValue(string Key, double Value, bool send = false)
+        {
+            AddOrUpdateValue(Key, ValueType.FLOAT, Value.ToString(), send);
+        }
+
+        private void AddOrUpdateValue(string Key, string Value, bool send = false)
+        {
+            AddOrUpdateValue(Key, ValueType.STRING, Value, send);
+        }
+
+        private void AddOrUpdateValue(string Key, bool Value, bool send = false)
+        {
+            AddOrUpdateValue(Key, Convert.ToInt32(Value), send);
         }
     }
 }
