@@ -31,73 +31,161 @@ namespace DemoROVDashboard
 
         ObservableCollection<Value> dataTable = new ObservableCollection<Value>();
         Value newValue = new Value();
-        SerialDevice device;
+        SerialDevice device = null;
         volatile string bigInputBuffer = "";
         volatile string cmdInputBuffer = "";
         const int BUFFER_LENGTH = 2000;
+        volatile bool doReaderProcess = false;
+        volatile bool readerProcessRunning = false;
 
         public MainPage()
         {
             this.InitializeComponent();
 
-            SerialInit();
+            FindSerialDevices();
 
             dataTable.Add(new Value { Key = "key123", Type = ValueType.STRING, ValueStr = "foobar" });
 
             Variables.ItemsSource = dataTable;
         }
 
-        private async void SerialInit()
+        private void WriteToConsole(string text)
         {
-            int count = 0;
-
-            DeviceInformationCollection devices = default(DeviceInformationCollection);
-
-            while (count == 0)
+            bigInputBuffer += text;
+            if (bigInputBuffer.Length > BUFFER_LENGTH)
             {
-                bigInputBuffer += "Waiting for device...\n";
-                ConsoleView.Text = bigInputBuffer;
-                devices = await DeviceInformation.FindAllAsync(SerialDevice.GetDeviceSelector());
-                count = devices.Count;
-                await Task.Delay(1000);
+                bigInputBuffer = bigInputBuffer.Substring(bigInputBuffer.Length - BUFFER_LENGTH);
+            }
+            _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { ConsoleView.Text = bigInputBuffer; ConsoleScroller.ChangeView(null, ConsoleScroller.ExtentHeight, null, true); });
+        }
+
+        private async void FindSerialDevices()
+        {
+            COMRefresh.IsEnabled = false;
+
+            await DisconnectDevice();
+
+            WriteToConsole("Searching for devices...\n");
+
+            try
+            {
+                DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(SerialDevice.GetDeviceSelector());
+                WriteToConsole("" + devices.Count + " device" + (devices.Count == 1 ? "" : "s") + " found.\n");
+                COMSelector.ItemsSource = devices;
+            }
+            catch (Exception exception)
+            {
+                WriteToConsole("Couldn't find any devices: " + exception.Message + "\n");
             }
 
-            bigInputBuffer += "Device found!\n\n";
-            ConsoleView.Text = bigInputBuffer;
+            COMRefresh.IsEnabled = true;
+        }
 
-            device = await SerialDevice.FromIdAsync(devices.First().Id);
-            device.BaudRate = 9600;
-            device.StopBits = SerialStopBitCount.One;
-            device.DataBits = 8;
-            device.Parity = SerialParity.None;
-            device.Handshake = SerialHandshake.None;
+        private async Task DisconnectDevice()
+        {
+            if (device != null)
+            {
+                WriteToConsole("Disconnecting...\n");
+                doReaderProcess = false;
+                while (readerProcessRunning)
+                {
+                    await Task.Delay(100);
+                }
+                try
+                {
+                    device.Dispose();
+                    device = null;
+                }
+                catch (Exception exception)
+                {
+                    WriteToConsole("Failed to disconnect: " + exception.Message + "\n");
+                    return;
+                }
 
-            await Task.Run(() => { ReaderProcess(); });
+
+                WriteToConsole("Disconnected.\n");
+            }
+        }
+
+        private async void ConnectToDevice(string Id)
+        {
+            await DisconnectDevice();
+
+            WriteToConsole("Connecting...\n");
+            try
+            {
+                device = await SerialDevice.FromIdAsync(Id);
+                device.BaudRate = 9600;
+                device.StopBits = SerialStopBitCount.One;
+                device.DataBits = 8;
+                device.Parity = SerialParity.None;
+                device.Handshake = SerialHandshake.None;
+            }
+            catch (Exception exception)
+            {
+                WriteToConsole("Failed to connect: " + exception.Message + "\n");
+                device = null;
+                COMSelector.SelectedItem = null;
+                return;
+            }
+
+            WriteToConsole("Connected.\n----------------------------------------\n\n");
+            doReaderProcess = true;
+            ReaderProcess();
+        }
+
+        private void COMSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.AddedItems.Count != 1)
+            {
+                return;
+            }
+            DeviceInformation deviceInfo = (DeviceInformation)e.AddedItems.First();
+            ConnectToDevice(deviceInfo.Id);
+        }
+
+        private void COMRefresh_Click(object sender, RoutedEventArgs e)
+        {
+            FindSerialDevices();
         }
 
         private async void ReaderProcess()
         {
+            readerProcessRunning = true;
             DataReader reader = new DataReader(device.InputStream);
             var buf = (new byte[1]).AsBuffer();
-            while (true)
+            int numError = 0;
+            while (doReaderProcess && numError < 10)
             {
                 try
                 {
                     await device.InputStream.ReadAsync(buf, 1, InputStreamOptions.Partial);
-                } catch { }
-                bigInputBuffer += (char)buf.ToArray()[0];
-                if (bigInputBuffer.Length > BUFFER_LENGTH)
-                {
-                    bigInputBuffer = bigInputBuffer.Substring(bigInputBuffer.Length - BUFFER_LENGTH);
                 }
-                await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { ConsoleView.Text = bigInputBuffer; ConsoleScroller.ChangeView(null, ConsoleScroller.ExtentHeight, null, true); });
+                catch (Exception exception)
+                {
+                    WriteToConsole("Error (" + (numError++) + "/10): " + exception.Message + "\n");
+                    continue;
+                }
+
+                numError = 0;
+
+                string newChar = System.Text.Encoding.UTF8.GetString(buf.ToArray());
+
+                WriteToConsole(newChar);
                 cmdInputBuffer += (char)buf.ToArray()[0];
 
-                await CheckCmd();
+                CheckCmd();
             }
+
+            if (doReaderProcess)
+            {
+                DisconnectDevice();
+            }
+            doReaderProcess = false;
+            readerProcessRunning = false;
         }
 
-        private async Task CheckCmd()
+        private void CheckCmd()
         {
             if (cmdInputBuffer[0] != '~')
             {
@@ -132,15 +220,7 @@ namespace DemoROVDashboard
                         cmdInputBuffer = cmdInputBuffer.Substring(2);
                         string value = cmdInputBuffer.Substring(0, cmdInputBuffer.Length - 1);
 
-                        Value entry = dataTable.FirstOrDefault((Value a) => { return a.Key == key; });
-                        if (entry != null)
-                        {
-                            await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { entry.Type = type; entry.ValueRepr = value; });
-                            }
-                        else
-                        {
-                            await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { dataTable.Add(new Value() { Key = key, Type = type, ValueRepr = value }); });
-                        }
+                        AddOrUpdateValue(new Value() { Key = key, Type = type, ValueRepr = value });
                     }
 
                     cmdInputBuffer = "";
@@ -150,7 +230,15 @@ namespace DemoROVDashboard
 
         private async void SendValue(Value value)
         {
+            if (device == null)
+            {
+                return;
+            }
             string serializedValue = value.Serialize();
+            if (OutputShow.IsChecked == true)
+            {
+                WriteToConsole("[output] " + serializedValue);
+            }
             DataWriter writer = new DataWriter(device.OutputStream);
             writer.WriteString(serializedValue);
             await writer.StoreAsync();
@@ -174,9 +262,21 @@ namespace DemoROVDashboard
 
         private void Add_Click(object sender, RoutedEventArgs e)
         {
-            dataTable.Add(new Value { Key = newValue.Key, Type = newValue.Type, ValueRepr = newValue.ValueRepr });
+            AddOrUpdateValue(newValue);
             SendValue(newValue);
-            newValue = new Value();
+        }
+
+        private void AddOrUpdateValue(Value value)
+        {
+            Value entry = dataTable.FirstOrDefault((Value a) => { return a.Key == value.Key; });
+            if (entry != null)
+            {
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { entry.Type = value.Type; entry.ValueRepr = value.ValueRepr; });
+            }
+            else
+            {
+                dataTable.Add(new Value { Key = value.Key, Type = value.Type, ValueRepr = value.ValueRepr });
+            }
         }
     }
 }
