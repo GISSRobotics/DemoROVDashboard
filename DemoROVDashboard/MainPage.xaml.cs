@@ -29,7 +29,7 @@ namespace DemoROVDashboard
     /// </summary>
     public sealed partial class MainPage : Page
     {
-        readonly ObservableCollection<Value> dataTable = new ObservableCollection<Value>();
+        ObservableCollection<Value> dataTable = new ObservableCollection<Value>();
         readonly Value newValue = new Value();
         SerialDevice device = null;
         volatile string bigInputBuffer = "";
@@ -38,7 +38,6 @@ namespace DemoROVDashboard
         volatile bool doReaderProcess = false;
         volatile bool readerProcessRunning = false;
         readonly List<RawGameController> gamepads = new List<RawGameController>();
-        DispatcherTimer ControllerReadingUpdateTimer;
 
         public MainPage()
         {
@@ -48,21 +47,12 @@ namespace DemoROVDashboard
 
             Variables.ItemsSource = dataTable;
 
-            ControllerReadingUpdateTimer = new DispatcherTimer()
-            {
-                Interval = TimeSpan.FromMilliseconds(100)
-            };
+            ControllerUpdateProcess();
 
-            ControllerReadingUpdateTimer.Tick += ControllerReadingUpdateTimer_Tick;
-            ControllerReadingUpdateTimer.Start();
+            FullControllerUpdate();
 
             RawGameController.RawGameControllerAdded += ControllerAdded;
             RawGameController.RawGameControllerRemoved += ControllerRemoved;
-        }
-
-        private void ControllerReadingUpdateTimer_Tick(object sender, object e)
-        {
-            ControllerReadingUpdate();
         }
 
         private void ControllerAdded(object sender, RawGameController e)
@@ -96,33 +86,45 @@ namespace DemoROVDashboard
             FullControllerUpdate();
         }
 
-        private void FullControllerUpdate()
+        private async void FullControllerUpdate()
         {
-            AddOrUpdateValue($"HID/Gamepad", gamepads.Count, true);
+            await AddOrUpdateValue($"HID/Gamepad", gamepads.Count, true);
 
             for (int i = 0; i < gamepads.Count; i++)
             {
                 RawGameController gamepad = gamepads[i];
-                AddOrUpdateValue($"HID/Gamepad/{i}", gamepad.DisplayName, true);
-                AddOrUpdateValue($"HID/Gamepad/{i}/Axis", gamepad.AxisCount, true);
-                AddOrUpdateValue($"HID/Gamepad/{i}/Button", gamepad.ButtonCount, true);
-                AddOrUpdateValue($"HID/Gamepad/{i}/Switch", gamepad.SwitchCount, true);
+                await AddOrUpdateValue($"HID/Gamepad/{i}", gamepad.DisplayName, true);
+                await AddOrUpdateValue($"HID/Gamepad/{i}/Axis", gamepad.AxisCount, true);
+                await AddOrUpdateValue($"HID/Gamepad/{i}/Button", gamepad.ButtonCount, true);
+                await AddOrUpdateValue($"HID/Gamepad/{i}/Switch", gamepad.SwitchCount, true);
 
                 for (int j = 0; j < gamepad.ButtonCount; j++)
                 {
-                    AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}/Name", gamepad.GetButtonLabel(j).ToString(), true);
+                    await AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}/Name", gamepad.GetButtonLabel(j).ToString(), true);
                 }
 
                 for (int j = 0; j < gamepad.SwitchCount; j++)
                 {
-                    AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}/Kind", (int)gamepad.GetSwitchKind(j), true);
+                    await AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}/Kind", (int)gamepad.GetSwitchKind(j), true);
                 }
+
+                await AddOrUpdateValue($"HID/Gamepad/{i}/VID", (int)gamepad.HardwareVendorId, true);
+                await AddOrUpdateValue($"HID/Gamepad/{i}/PID", (int)gamepad.HardwareProductId, true);
             }
-            
-            ControllerReadingUpdate();
+
+            await ControllerReadingUpdate();
         }
 
-        private void ControllerReadingUpdate()
+        private async void ControllerUpdateProcess()
+        {
+            while (true)
+            {
+                await ControllerReadingUpdate();
+                await Task.Delay(1);
+            }
+        }
+
+        private async Task ControllerReadingUpdate()
         {
             for (int i = 0; i < gamepads.Count; i++)
             {
@@ -131,20 +133,21 @@ namespace DemoROVDashboard
                 GameControllerSwitchPosition[] switchArray = new GameControllerSwitchPosition[gamepad.SwitchCount];
                 double[] axisArray = new double[gamepad.AxisCount];
                 ulong timestamp = gamepad.GetCurrentReading(buttonArray, switchArray, axisArray);
+                System.Diagnostics.Debug.WriteLine(timestamp);
 
                 for (int j = 0; j < gamepad.AxisCount; j++)
                 {
-                    AddOrUpdateValue($"HID/Gamepad/{i}/Axis/{j}", axisArray[j], true);
+                    await AddOrUpdateValue($"HID/Gamepad/{i}/Axis/{j}", axisArray[j], true);
                 }
 
                 for (int j = 0; j < gamepad.ButtonCount; j++)
                 {
-                    AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}", buttonArray[j], true);
+                    await AddOrUpdateValue($"HID/Gamepad/{i}/Button/{j}", buttonArray[j], true);
                 }
 
                 for (int j = 0; j < gamepad.SwitchCount; j++)
                 {
-                    AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}", (int)switchArray[j], true);
+                    await AddOrUpdateValue($"HID/Gamepad/{i}/Switch/{j}", (int)switchArray[j], true);
                 }
 
                 //AddOrUpdateValue($"HID/Gamepad/{i}/Battery", (int)gamepad.TryGetBatteryReport().Status, true);
@@ -276,7 +279,7 @@ namespace DemoROVDashboard
                 WriteToConsole(newChar);
                 cmdInputBuffer += (char)buf.ToArray()[0];
 
-                CheckCmd();
+                await CheckCmd();
             }
 
             if (doReaderProcess)
@@ -287,7 +290,7 @@ namespace DemoROVDashboard
             readerProcessRunning = false;
         }
 
-        private void CheckCmd()
+        private async Task CheckCmd()
         {
             if (cmdInputBuffer[0] != '~')
             {
@@ -322,7 +325,7 @@ namespace DemoROVDashboard
                         cmdInputBuffer = cmdInputBuffer.Substring(2);
                         string value = cmdInputBuffer.Substring(0, cmdInputBuffer.Length - 1);
 
-                        AddOrUpdateValue(key, type, value);
+                        await AddOrUpdateValue(key, type, value);
                     }
 
                     cmdInputBuffer = "";
@@ -330,16 +333,16 @@ namespace DemoROVDashboard
             }
         }
 
-        private async void SendValue(Value value)
+        private async Task SendValue(Value value)
         {
-            if (device == null)
-            {
-                return;
-            }
             string serializedValue = value.Serialize();
             if (OutputShow.IsChecked == true)
             {
                 WriteToConsole("[output] " + serializedValue);
+            }
+            if (device == null)
+            {
+                return;
             }
             DataWriter writer = new DataWriter(device.OutputStream);
             writer.WriteString(serializedValue);
@@ -348,11 +351,11 @@ namespace DemoROVDashboard
             writer.Dispose();
         }
 
-        private void Send_Click(object sender, RoutedEventArgs e)
+        private async void Send_Click(object sender, RoutedEventArgs e)
         {
             string key = (string)(sender as Button).Tag;
             Value value = dataTable.FirstOrDefault((Value a) => { return a.Key == key; });
-            SendValue(value);
+            await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () => { await SendValue(value); });
         }
 
         private void Remove_Click(object sender, RoutedEventArgs e)
@@ -362,21 +365,28 @@ namespace DemoROVDashboard
         }
 
 
-        private void Add_Click(object sender, RoutedEventArgs e)
+        private async void Add_Click(object sender, RoutedEventArgs e)
         {
-            AddOrUpdateValue(newValue, true);
+            await AddOrUpdateValue(newValue, true);
         }
 
-        private void AddOrUpdateValue(Value value, bool send = false)
+        private async Task AddOrUpdateValue(Value value, bool send = false)
         {
             Value entry = dataTable.FirstOrDefault((Value a) => { return a.Key == value.Key; });
             if (entry != null)
             {
-                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { entry.Type = value.Type; entry.ValueRepr = value.ValueRepr; });
+                await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { entry.Type = value.Type; entry.ValueRepr = value.ValueRepr; });
             }
             else
             {
-                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => { dataTable.Add(new Value { Key = value.Key, Type = value.Type, ValueRepr = value.ValueRepr }); });
+                await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () => {
+                    dataTable.Add(new Value { Key = value.Key, Type = value.Type, ValueRepr = value.ValueRepr });
+                    var a = (from item in dataTable
+                                            orderby item.Key
+                                            select item);
+                    dataTable = new ObservableCollection<Value>(a);
+                    Variables.ItemsSource = dataTable;
+                });
             }
 
             if (send)
@@ -385,28 +395,28 @@ namespace DemoROVDashboard
             }
         }
 
-        private void AddOrUpdateValue(string Key, ValueType Type, string ValueRepr, bool send = false)
+        private async Task AddOrUpdateValue(string Key, ValueType Type, string ValueRepr, bool send = false)
         {
-            AddOrUpdateValue(new Value { Key = Key, Type = Type, ValueRepr = ValueRepr }, send);
+            await AddOrUpdateValue(new Value { Key = Key, Type = Type, ValueRepr = ValueRepr }, send);
         }
 
-        private void AddOrUpdateValue(string Key, int Value, bool send = false)
+        private async Task AddOrUpdateValue(string Key, int Value, bool send = false)
         {
-            AddOrUpdateValue(Key, ValueType.INT, Value.ToString(), send);
+            await AddOrUpdateValue(Key, ValueType.INT, Value.ToString(), send);
         }
-        private void AddOrUpdateValue(string Key, double Value, bool send = false)
+        private async Task AddOrUpdateValue(string Key, double Value, bool send = false)
         {
-            AddOrUpdateValue(Key, ValueType.FLOAT, Value.ToString(), send);
-        }
-
-        private void AddOrUpdateValue(string Key, string Value, bool send = false)
-        {
-            AddOrUpdateValue(Key, ValueType.STRING, Value, send);
+            await AddOrUpdateValue(Key, ValueType.FLOAT, Value.ToString(), send);
         }
 
-        private void AddOrUpdateValue(string Key, bool Value, bool send = false)
+        private async Task AddOrUpdateValue(string Key, string Value, bool send = false)
         {
-            AddOrUpdateValue(Key, Convert.ToInt32(Value), send);
+            await AddOrUpdateValue(Key, ValueType.STRING, Value, send);
+        }
+
+        private async Task AddOrUpdateValue(string Key, bool Value, bool send = false)
+        {
+            await AddOrUpdateValue(Key, Convert.ToInt32(Value), send);
         }
     }
 }

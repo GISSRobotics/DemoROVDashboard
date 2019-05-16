@@ -16,8 +16,6 @@ namespace DemoROVDashboard
         public static string[] TYPE = { "I", "F", "S" };
         public static string END = "\n";
         public string Key { get; set; }
-        public string SendBtnName { get { return "Send_" + Key; } }
-        public string RemoveBtnName { get { return "Remove_" + Key; } }
         public ValueType Type = ValueType.INT;
         public int TypeInt { get { return (int)Type; } set { Type = (ValueType)value; } }
         public int ValueInt = 0;
